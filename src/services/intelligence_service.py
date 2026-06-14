@@ -10,6 +10,7 @@ from typing import Any, Dict, List, Optional
 
 from dotenv import load_dotenv
 
+from src.analytics import pricing_risk
 from src.models.intelligence_briefing import IntelligenceBriefing
 
 load_dotenv()
@@ -60,6 +61,60 @@ class IntelligenceService:
             "policy_risk": round(policy_risk, 1),
             "composite_score": round(composite, 1),
             "risk_level": "High" if composite >= 70 else "Medium" if composite >= 40 else "Low",
+        }
+
+    def compute_contract_risk(
+        self,
+        commodity: str,
+        contract_price: float,
+        market_price: float,
+        volume: float,
+        volatility: float,
+        confidence_level: float = 0.95,
+        time_horizon_days: float = 1.0,
+        breach_threshold_pct: float = 10.0,
+    ) -> Dict[str, Any]:
+        """Quantitative risk profile for a commodity supply-chain contract.
+
+        Combines mark-to-market P&L, parametric VaR/CVaR, a crisis-scenario
+        stressed VaR, and the probability of price breaching a contract
+        threshold. Position value is taken as the notional market exposure
+        (|market_price * volume|).
+
+        Args:
+            commodity: Commodity name (echoed into the result).
+            contract_price: Original contracted price per unit.
+            market_price: Current market price per unit.
+            volume: Contracted volume in applicable units.
+            volatility: Per-period (e.g. daily) volatility, decimal, for VaR.
+            confidence_level: VaR/CVaR confidence level (default 0.95).
+            time_horizon_days: VaR holding period in days (default 1).
+            breach_threshold_pct: Breach threshold as a percent move.
+
+        Returns:
+            Dict of quantitative risk metrics, all in USD unless noted.
+        """
+        position_value = abs(market_price * volume)
+        pnl = pricing_risk.calculate_contract_pnl(contract_price, market_price, volume)
+        var = pricing_risk.calculate_var(
+            position_value, volatility, confidence_level, time_horizon_days
+        )
+        cvar = pricing_risk.calculate_cvar(position_value, volatility, confidence_level)
+        stressed = pricing_risk.stress_test_var(position_value, volatility, 5.0)
+        # breach_probability expects an annualized vol; de-scale the per-day input.
+        annualized_vol = volatility * (pricing_risk.TRADING_DAYS ** 0.5)
+        breach = pricing_risk.breach_probability(
+            annualized_vol, breach_threshold_pct, time_horizon_days
+        )
+        return {
+            "commodity": commodity,
+            "position_value": round(position_value, 2),
+            "mark_to_market_pnl": pnl,
+            "value_at_risk": var,
+            "conditional_var": cvar,
+            "stressed_var_crisis": stressed,
+            "breach_probability": breach,
+            "confidence_level": confidence_level,
         }
 
     def generate_briefing(self, commodity: str, context: Dict = None) -> IntelligenceBriefing:
