@@ -1,0 +1,7 @@
+requirements.txt
+src/
+terraform/
+tests/
+notebooks/
+docs/
+*.py
